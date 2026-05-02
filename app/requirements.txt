@@ -1,0 +1,9 @@
+# =============================================================
+# Dépendances Interface Streamlit — CancerScan IA
+# NOTE : Streamlit N'a PAS besoin de TensorFlow
+#        Il envoie juste les images à l'API via HTTP
+# =============================================================
+
+streamlit==1.33.0
+requests==2.31.0
+Pillow==10.3.0
