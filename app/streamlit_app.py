@@ -1,475 +1,237 @@
 # =============================================================
-# Interface Streamlit — CancerScan IA
-# Classification du Cancer du Sein
-# Université de Thiès — MaRT2 — 2025-2026
+# CancerScan IA — Version Premium (UI/UX + Dashboard + PDF)
 # =============================================================
 
 import os
 import io
 import base64
 import requests
+import datetime as dt
 import streamlit as st
 from PIL import Image
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Image as RLImage
+from reportlab.lib.styles import getSampleStyleSheet
 
-# =============================================================
-# Configuration de la page
-# =============================================================
-st.set_page_config(
-    page_title="CancerScan IA",
-    page_icon="🔬",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
+# -------------------- CONFIG --------------------
+st.set_page_config(page_title="CancerScan IA", page_icon="🔬", layout="centered")
 
 API_URL = os.getenv("API_URL", "https://cancer-scan-ia.onrender.com")
 
-# =============================================================
-# CSS
-# =============================================================
+if "loading" not in st.session_state:
+    st.session_state["loading"] = False
+if "history" not in st.session_state:
+    st.session_state["history"] = []  # liste de dicts {date, label, conf}
+
+# -------------------- STYLE --------------------
 st.markdown("""
 <style>
-/* ── Typographie ── */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=DM+Serif+Display:ital@0;1&display=swap');
+/* Typography */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=DM+Serif+Display&display=swap');
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 
-/* ── Header ── */
-.hero {
-    background: linear-gradient(135deg, #0c0f1a 0%, #131929 60%, #0c0f1a 100%);
-    border: 1px solid #1e2d45;
-    border-radius: 16px;
-    padding: 2.5rem 2rem;
+/* Header */
+.header {
+    text-align:center;
     margin-bottom: 1.5rem;
-    position: relative;
-    overflow: hidden;
 }
-.hero::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background:
-        radial-gradient(ellipse 60% 50% at 20% 50%, rgba(99,102,241,.07) 0%, transparent 70%),
-        radial-gradient(ellipse 50% 40% at 80% 50%, rgba(16,185,129,.05) 0%, transparent 70%);
-    pointer-events: none;
-}
-.hero-chip {
-    display: inline-block;
-    background: rgba(99,102,241,.12);
-    color: #818cf8;
-    border: 1px solid rgba(99,102,241,.25);
-    border-radius: 20px;
-    padding: 3px 12px;
-    font-size: 11px;
-    font-weight: 500;
-    letter-spacing: .05em;
-    margin-bottom: .8rem;
-}
-.hero h1 {
+.title {
     font-family: 'DM Serif Display', serif;
-    font-size: 2.2rem;
-    color: #f1f5f9;
-    margin: 0 0 .4rem;
+    font-size: 2.4rem;
+    color: #6366f1;
+    margin-bottom: .2rem;
 }
-.hero p { color: #94a3b8; font-size: .9rem; font-weight: 300; margin: 0; }
+.subtitle {
+    color:#94a3b8;
+    font-size:.9rem;
+}
 
-/* ── Cartes résultat ── */
-.card-cancer {
-    background: linear-gradient(135deg,#1a0a0a,#2d1515);
-    border: 1px solid #ef4444;
+/* Card */
+.card {
+    background: rgba(17, 24, 39, .6);
+    backdrop-filter: blur(8px);
+    border: 1px solid #1f2937;
+    border-radius: 16px;
+    padding: 1.2rem;
+}
+
+/* Result */
+.result-pos { background: linear-gradient(135deg,#2b0c0c,#3b1111); border:1px solid #ef4444; }
+.result-neg { background: linear-gradient(135deg,#071612,#0e2a22); border:1px solid #10b981; }
+.result {
     border-radius: 14px;
-    padding: 1.5rem;
-    text-align: center;
+    padding: 1.2rem;
+    text-align:center;
 }
-.card-negative {
-    background: linear-gradient(135deg,#071612,#0d2820);
-    border: 1px solid #10b981;
-    border-radius: 14px;
-    padding: 1.5rem;
-    text-align: center;
-}
-.result-emoji  { font-size: 2.8rem; margin-bottom: .4rem; }
-.result-title  {
-    font-family: 'DM Serif Display', serif;
-    font-size: 1.7rem;
-    margin-bottom: .3rem;
-}
-.result-sub    { font-size: .8rem; color: #94a3b8; font-weight: 300; }
+.res-title { font-family:'DM Serif Display', serif; font-size:1.5rem; }
+.res-sub { font-size:.85rem; color:#94a3b8; }
 
-/* ── Barre de confiance ── */
-.bar-bg {
-    background: #1e293b;
-    border-radius: 8px;
-    height: 10px;
-    margin: .9rem 0 .3rem;
-    overflow: hidden;
-}
-.bar-fill-cancer   { height: 100%; background: linear-gradient(90deg,#ef4444,#dc2626); border-radius: 8px; }
-.bar-fill-negative { height: 100%; background: linear-gradient(90deg,#10b981,#059669); border-radius: 8px; }
-
-/* ── Mini métriques ── */
-.metric {
-    background: #1e293b;
-    border: 1px solid #2d3f56;
-    border-radius: 10px;
-    padding: 1rem;
-    text-align: center;
-}
-.metric-lbl { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: #64748b; margin-bottom: .4rem; }
-.metric-val { font-family: 'DM Serif Display', serif; font-size: 1.5rem; color: #e2e8f0; }
-
-/* ── Alertes ── */
-.alert-warn {
-    background: rgba(234,179,8,.07);
-    border: 1px solid rgba(234,179,8,.25);
-    border-radius: 10px;
-    padding: .9rem 1.1rem;
-    color: #fbbf24;
-    font-size: .82rem;
-    margin-top: 1.2rem;
-    line-height: 1.6;
-}
-.alert-info {
-    background: rgba(99,102,241,.07);
-    border: 1px solid rgba(99,102,241,.2);
-    border-radius: 10px;
-    padding: .9rem 1.1rem;
-    color: #a5b4fc;
-    font-size: .82rem;
-    margin-bottom: .9rem;
-    line-height: 1.6;
-}
-
-/* ── Sidebar ── */
-[data-testid="stSidebar"] { background: #0c0f1a !important; }
-.sb-card {
-    background: #131929;
-    border: 1px solid #1e2d45;
-    border-radius: 10px;
-    padding: .9rem;
-    margin-bottom: .8rem;
-}
-.sb-title { font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: #475569; font-weight: 600; margin-bottom: .6rem; }
-
-/* ── Bouton ── */
-.stButton > button {
-    background: linear-gradient(135deg,#4f46e5,#6d28d9) !important;
-    color: #fff !important;
-    border: none !important;
-    border-radius: 10px !important;
-    font-weight: 500 !important;
-    width: 100% !important;
-    padding: .55rem 0 !important;
-}
-.stButton > button:hover { opacity: .88 !important; }
-
-/* ── Empty state ── */
-.empty-state {
-    background: #131929;
-    border: 2px dashed #1e2d45;
-    border-radius: 14px;
-    padding: 3rem 1rem;
-    text-align: center;
-    color: #475569;
-}
-
-/* ── Steps bas de page ── */
-.step-card {
-    background: #131929;
-    border: 1px solid #1e2d45;
-    border-radius: 10px;
-    padding: .9rem;
-    display: flex;
-    gap: .7rem;
-    align-items: flex-start;
-}
-.step-num {
-    background: #1e1b4b;
-    color: #a5b4fc;
-    width: 26px; height: 26px;
-    border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 11px; font-weight: 600; flex-shrink: 0;
-}
+/* Small */
+.muted { color:#64748b; font-size:.8rem; }
 </style>
 """, unsafe_allow_html=True)
 
-
-# =============================================================
-# Fonctions
-# =============================================================
-
-@st.cache_data(ttl=10)
-def api_health():
-    try:
-        r = requests.get(f"{API_URL}/health", timeout=5)
-        if r.status_code == 200:
-            return True, r.json()
-    except Exception:
-        pass
-    return False, {}
-
-
-def call_api(image_bytes: bytes, gradcam: bool) -> tuple[bool, dict]:
+# -------------------- HELPERS --------------------
+def call_api(image_bytes, gradcam=False):
     endpoint = "/predict/gradcam" if gradcam else "/predict"
     try:
         r = requests.post(
             f"{API_URL}{endpoint}",
-            files={"file": ("image.jpg", image_bytes, "image/jpeg")},
-            timeout=60,
+            files={"file": ("img.jpg", image_bytes, "image/jpeg")},
+            timeout=120,
         )
         r.raise_for_status()
         return True, r.json()
-    except requests.exceptions.ConnectionError:
-        return False, {"error": "Impossible de joindre l'API. Lancez start_api.bat d'abord."}
-    except requests.exceptions.Timeout:
-        return False, {"error": "L'API met trop de temps (timeout 60s). Modèle trop lourd ?"}
     except Exception as e:
         return False, {"error": str(e)}
 
-
-def b64_to_pil(b64: str) -> Image.Image:
+def b64_to_pil(b64):
     return Image.open(io.BytesIO(base64.b64decode(b64)))
 
+def make_pdf(image: Image.Image, label: str, conf: float, probs: dict) -> bytes:
+    """Génère un PDF simple (reportlab)"""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer)
+    styles = getSampleStyleSheet()
+    elems = []
 
-# =============================================================
-# Sidebar
-# =============================================================
-with st.sidebar:
-    st.markdown(
-        '<p style="font-family:DM Serif Display,serif;font-size:1.3rem;'
-        'color:#e2e8f0;margin-bottom:1.2rem;">⚙️ Paramètres</p>',
-        unsafe_allow_html=True,
-    )
+    elems.append(Paragraph("CancerScan IA — Rapport", styles["Title"]))
+    elems.append(Spacer(1, 10))
+    elems.append(Paragraph(f"Date: {dt.datetime.now().strftime('%Y-%m-%d %H:%M')}", styles["Normal"]))
+    elems.append(Spacer(1, 10))
+    elems.append(Paragraph(f"Résultat: {label} — Confiance: {conf:.1f}%", styles["Heading2"]))
+    elems.append(Spacer(1, 10))
+    elems.append(Paragraph(
+        f"P(Cancer): {probs.get('Cancer',0):.1f}% | P(Négatif): {probs.get('Negative',0):.1f}%",
+        styles["Normal"]
+    ))
+    elems.append(Spacer(1, 14))
 
-    api_ok, api_info = api_health()
-    s_col, s_txt = ("#10b981", "✅ Connectée") if api_ok else ("#ef4444", "❌ Hors ligne")
-    st.markdown(f"""
-    <div class="sb-card">
-        <div class="sb-title">Statut API</div>
-        <div style="color:{s_col};font-size:.88rem;font-weight:500;">{s_txt}</div>
-        <div style="color:#475569;font-size:.76rem;margin-top:3px;">{API_URL}</div>
-    </div>""", unsafe_allow_html=True)
+    # Image
+    img_buf = io.BytesIO()
+    image.save(img_buf, format="PNG")
+    img_buf.seek(0)
+    elems.append(RLImage(img_buf, width=300, height=300))
 
-    st.markdown('<div class="sb-card"><div class="sb-title">Options</div>', unsafe_allow_html=True)
-    use_gradcam = st.checkbox("Afficher Grad-CAM", value=True,
-                              help="Carte de chaleur montrant les zones analysées par le modèle.")
-    st.markdown('</div>', unsafe_allow_html=True)
+    doc.build(elems)
+    buffer.seek(0)
+    return buffer.read()
 
-    if api_ok:
-        th = api_info.get("threshold", 0.5)
-        cls = api_info.get("class_labels", {})
-        st.markdown(f"""
-        <div class="sb-card">
-            <div class="sb-title">Modèle</div>
-            <div style="color:#94a3b8;font-size:.8rem;line-height:1.9;">
-                🏗️ EfficientNetB0<br>
-                🎯 Seuil : {th}<br>
-                📦 Classe 0 : {cls.get('0','Cancer')}<br>
-                📦 Classe 1 : {cls.get('1','Negative')}<br>
-                🔢 TF : {api_info.get('tf_version','—')}
-            </div>
-        </div>""", unsafe_allow_html=True)
-
-    st.markdown("""
-    <div class="sb-card">
-        <div class="sb-title">Projet</div>
-        <div style="color:#475569;font-size:.78rem;line-height:1.8;">
-            Université de Thiès<br>UFR SET · MaRT2<br>
-            Deep Learning 2025-2026<br>Pr. Cheikh SARR
-        </div>
-    </div>""", unsafe_allow_html=True)
-
-
-# =============================================================
-# Hero
-# =============================================================
+# -------------------- HEADER --------------------
 st.markdown("""
-<div class="hero">
-    <div class="hero-chip">🔬 Deep Learning · Images histologiques · IDC</div>
-    <h1>CancerScan IA</h1>
-    <p>Détection du carcinome canalaire invasif (IDC) — EfficientNetB0 fine-tuné + Grad-CAM</p>
+<div class="header">
+  <div class="title">🔬 CancerScan IA</div>
+  <div class="subtitle">Détection du carcinome canalaire invasif (IDC) — EfficientNetB0</div>
 </div>
 """, unsafe_allow_html=True)
 
+# -------------------- CONTROLS --------------------
+colA, colB = st.columns([1,1])
+with colA:
+    uploaded = st.file_uploader("📤 Charger une image", type=["jpg","jpeg","png"], label_visibility="visible")
+with colB:
+    use_gradcam = st.toggle("Afficher Grad-CAM", value=True)
 
-# =============================================================
-# Colonnes principales
-# =============================================================
-col_left, col_right = st.columns([1, 1], gap="large")
+# -------------------- UPLOAD VIEW --------------------
+if uploaded:
+    image = Image.open(uploaded).convert("RGB")
+    st.image(image, use_column_width=True, caption="Image chargée")
+    st.info("💡 Astuce : image nette = meilleure précision")
 
-# ── Colonne gauche : upload ───────────────────────────────────
-with col_left:
-    st.markdown("#### 📤 Image histologique")
-    st.markdown("""
-    <div class="alert-info">
-        Téléversez une image histologique du tissu mammaire (JPG ou PNG).
-        Le modèle prédit la présence ou l'absence d'IDC (carcinome canalaire invasif).
-    </div>""", unsafe_allow_html=True)
+    analyze = st.button("🚀 Lancer l’analyse", use_container_width=True)
 
-    uploaded = st.file_uploader(
-        "Choisir une image",
-        type=["jpg", "jpeg", "png"],
-        label_visibility="collapsed",
-    )
+    if analyze and not st.session_state["loading"]:
+        st.session_state["loading"] = True
 
-    if uploaded:
-        image = Image.open(uploaded).convert("RGB")
-        st.image(image, use_column_width=True, caption="Image chargée")
+        with st.spinner("🧠 Analyse en cours..."):
+            ok, res = call_api(uploaded.getvalue(), gradcam=use_gradcam)
 
-        # Infos rapides
-        c1, c2, c3 = st.columns(3)
-        for col_m, lbl, val in zip(
-            [c1, c2, c3],
-            ["Largeur", "Hauteur", "Taille"],
-            [f"{image.size[0]}px", f"{image.size[1]}px", f"{len(uploaded.getvalue())//1024} Ko"],
-        ):
-            with col_m:
-                st.markdown(
-                    f'<div class="metric"><div class="metric-lbl">{lbl}</div>'
-                    f'<div class="metric-val" style="font-size:1.1rem">{val}</div></div>',
-                    unsafe_allow_html=True,
-                )
+        st.session_state["loading"] = False
 
-        st.markdown("<br>", unsafe_allow_html=True)
-
-        if not api_ok:
-            st.error("❌ L'API n'est pas disponible. Lancez **start_api.bat** dans un terminal séparé.")
+        if not ok:
+            st.error("❌ Erreur API")
+            st.code(res.get("error",""))
         else:
-            if st.button("🔬 Analyser l'image"):
-                with st.spinner("Analyse en cours — EfficientNetB0..."):
-                    ok, resp = call_api(uploaded.getvalue(), gradcam=use_gradcam)
+            pred = res.get("prediction", {})
+            label = pred.get("label","")
+            conf  = pred.get("confidence_pct",0)
+            probs = pred.get("probabilities",{})
 
-                if ok:
-                    st.session_state["result"] = resp
-                    st.session_state["orig_img"] = image
-                    st.success("✅ Analyse terminée !")
-                else:
-                    st.error(f"❌ {resp.get('error', 'Erreur inconnue')}")
+            # Save history
+            st.session_state["history"].append({
+                "date": dt.datetime.now().strftime("%H:%M:%S"),
+                "label": label,
+                "conf": conf
+            })
 
+            st.markdown("---")
 
-# ── Colonne droite : résultats ────────────────────────────────
-with col_right:
-    st.markdown("#### 📊 Résultat de l'analyse")
-
-    if "result" not in st.session_state:
-        st.markdown("""
-        <div class="empty-state">
-            <div style="font-size:3rem;margin-bottom:.8rem;">🔬</div>
-            <p style="margin:0;font-size:.9rem;">
-                Les résultats s'afficheront ici<br>après l'analyse.
-            </p>
-        </div>""", unsafe_allow_html=True)
-
-    else:
-        res   = st.session_state["result"]
-        pred  = res.get("prediction", {})
-        cid   = pred.get("class_id", 0)
-        label = pred.get("label", "—")
-        conf  = pred.get("confidence_pct", 0)
-        raw   = pred.get("raw_score", 0)
-        probs = pred.get("probabilities", {})
-
-        is_cancer = (label.lower() == "cancer")
-
-        if is_cancer:
-            st.markdown(f"""
-            <div class="card-cancer">
-                <div class="result-emoji">⚠️</div>
-                <div class="result-title" style="color:#fca5a5;">IDC Positif</div>
-                <div class="result-sub">Carcinome canalaire invasif détecté</div>
-                <div class="bar-bg">
-                    <div class="bar-fill-cancer" style="width:{conf}%"></div>
+            # RESULT CARD
+            if label.lower() == "cancer":
+                st.markdown(f"""
+                <div class="result result-pos">
+                  <div class="res-title">⚠️ Cancer détecté</div>
+                  <div class="res-sub">{conf:.1f}% de confiance</div>
                 </div>
-                <div style="color:#fca5a5;font-size:.85rem;font-weight:500;">{conf:.1f}% de confiance</div>
-            </div>""", unsafe_allow_html=True)
-        else:
-            st.markdown(f"""
-            <div class="card-negative">
-                <div class="result-emoji">✅</div>
-                <div class="result-title" style="color:#6ee7b7;">IDC Négatif</div>
-                <div class="result-sub">Aucun signe de carcinome canalaire invasif</div>
-                <div class="bar-bg">
-                    <div class="bar-fill-negative" style="width:{conf}%"></div>
+                """, unsafe_allow_html=True)
+            else:
+                st.markdown(f"""
+                <div class="result result-neg">
+                  <div class="res-title">✅ Aucun cancer détecté</div>
+                  <div class="res-sub">{conf:.1f}% de confiance</div>
                 </div>
-                <div style="color:#6ee7b7;font-size:.85rem;font-weight:500;">{conf:.1f}% de confiance</div>
-            </div>""", unsafe_allow_html=True)
+                """, unsafe_allow_html=True)
 
-        # Métriques
-        st.markdown("<br>", unsafe_allow_html=True)
-        m1, m2, m3 = st.columns(3)
-        metrics = [
-            ("Score brut", f"{raw:.4f}", "#e2e8f0"),
-            ("P(Cancer)",  f"{probs.get('Cancer',0):.1f}%", "#fca5a5"),
-            ("P(Négatif)", f"{probs.get('Negative',0):.1f}%", "#6ee7b7"),
-        ]
-        for col_m, (lbl, val, color) in zip([m1, m2, m3], metrics):
-            with col_m:
-                st.markdown(
-                    f'<div class="metric"><div class="metric-lbl">{lbl}</div>'
-                    f'<div class="metric-val" style="color:{color}">{val}</div></div>',
-                    unsafe_allow_html=True,
-                )
+            # Confidence bar
+            st.markdown("#### 📈 Confiance")
+            st.progress(min(max(conf/100, 0.0), 1.0))
 
-        # Grad-CAM
-        gcam = res.get("gradcam_image")    
-        if use_gradcam and gcam:
-            st.markdown("#### 🗺️ Visualisation Grad-CAM")
-            st.markdown("""
-            <div class="alert-info" style="margin-bottom:.7rem;">
-                Les zones <strong style="color:#ef4444">chaudes (rouge/orange)</strong>
-                indiquent les régions cellulaires décisives pour la prédiction du modèle.
-            </div>""", unsafe_allow_html=True)
+            # Details
+            st.markdown("#### 📊 Détails")
+            st.write({
+                "Cancer (%)": round(probs.get("Cancer", 0), 2),
+                "Négatif (%)": round(probs.get("Negative", 0), 2)
+            })
 
-            g1, g2 = st.columns(2)
-            with g1:
-                st.image(
-                    st.session_state["orig_img"].resize((224, 224)),
-                    caption="Image originale",
-                    use_column_width=True,
-                )
-            with g2:
-                st.image(
-                    b64_to_pil(gcam),
-                    caption="Grad-CAM (zones analysées)",
-                    use_column_width=True,
-                )
-        elif use_gradcam and not res.get("gradcam_available", False):
-            st.info("ℹ️ Grad-CAM non disponible pour ce modèle.")
+            # Grad-CAM
+            gcam = res.get("gradcam_image")
+            if use_gradcam and gcam:
+                with st.expander("🧠 Visualiser Grad-CAM"):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.image(image, caption="Original", use_column_width=True)
+                    with c2:
+                        st.image(b64_to_pil(gcam), caption="Grad-CAM", use_column_width=True)
 
-        # Avertissement médical
-        st.markdown("""
-        <div class="alert-warn">
-            ⚠️ <strong>Avertissement :</strong> Ce système est un outil de recherche pédagogique.
-            Il ne constitue pas un dispositif médical certifié et ne remplace en aucun cas
-            un diagnostic médical professionnel. Consultez toujours un médecin spécialiste.
-        </div>""", unsafe_allow_html=True)
+            # Export PDF
+            pdf_bytes = make_pdf(image, label, conf, probs)
+            st.download_button(
+                "📄 Télécharger le rapport PDF",
+                data=pdf_bytes,
+                file_name="cancerscan_report.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
 
-
-# =============================================================
-# Guide en bas de page
-# =============================================================
-st.markdown("<br>", unsafe_allow_html=True)
+# -------------------- DASHBOARD --------------------
 st.markdown("---")
-st.markdown("#### 📖 Comment utiliser l'application ?")
+st.markdown("### 📊 Historique des analyses")
 
-steps = [
-    ("1", "Téléverser",  "Chargez une image histologique du tissu mammaire (JPG/PNG)."),
-    ("2", "Vérifier",    "Assurez-vous que le statut API affiche ✅ dans la barre latérale."),
-    ("3", "Analyser",    "Cliquez sur 'Analyser l'image' pour lancer la prédiction IA."),
-    ("4", "Interpréter", "Lisez le résultat, la confiance et la heatmap Grad-CAM."),
-]
-cols = st.columns(4)
-for col_s, (n, title, desc) in zip(cols, steps):
-    with col_s:
-        st.markdown(f"""
-        <div class="step-card">
-            <div class="step-num">{n}</div>
-            <div>
-                <div style="color:#e2e8f0;font-weight:500;font-size:.85rem;margin-bottom:.25rem;">{title}</div>
-                <div style="color:#475569;font-size:.78rem;line-height:1.5;">{desc}</div>
-            </div>
-        </div>""", unsafe_allow_html=True)
+if not st.session_state["history"]:
+    st.info("Aucune analyse pour le moment")
+else:
+    # simple stats
+    total = len(st.session_state["history"])
+    cancers = sum(1 for x in st.session_state["history"] if x["label"].lower()=="cancer")
+    negs = total - cancers
 
-st.markdown("""
-<div style="text-align:center;color:#1e2d45;font-size:.76rem;margin-top:2rem;padding:1rem;">
-    Université de Thiès · UFR SET · Département Informatique · MaRT2 · Pr. Cheikh SARR · 2025-2026
-</div>""", unsafe_allow_html=True)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Total", total)
+    m2.metric("Cancer", cancers)
+    m3.metric("Négatif", negs)
+
+    # table
+    st.dataframe(st.session_state["history"], use_container_width=True)
+
+# -------------------- FOOTER --------------------
+st.markdown("---")
+st.caption("🚀 Deep Learning • EfficientNetB0 • Streamlit • Version Premium")
