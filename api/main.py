@@ -17,8 +17,8 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-MODEL_PATH  = os.getenv("MODEL_PATH",  "./models/model_clean.h5")
-PARAMS_PATH = os.getenv("PARAMS_PATH", "./models/preprocessing_params.pkl")
+MODEL_PATH  = os.getenv("MODEL_PATH",  "models/model_clean.h5")
+PARAMS_PATH = os.getenv("PARAMS_PATH", "models/preprocessing_params.pkl")
 
 DEFAULT_CONFIG = {
     "target_size"  : (224, 224),
